@@ -1,0 +1,8 @@
+pandas
+langchain
+openai==0.28
+streamlit
+python-dotenv
+pyngrok
+scipy
+pymongo 
