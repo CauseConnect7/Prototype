@@ -153,9 +153,14 @@ def scrape_company_mission(url):
 # ----------- MongoDB连接 -----------
 uri = os.getenv("MONGODB_URI")
 client = MongoClient(uri)
-db = client[os.getenv("MONGODB_DB_NAME")]
-collection1 = db["Non Profit"]
-collection2 = db["For-Profit"]
+
+# 连接到输入数据库
+input_db = client[os.getenv("MONGODB_DB_INPUT_NAME")]  # Organization
+# 连接到输出数据库
+output_db = client[os.getenv("MONGODB_DB_OUTPUT_NAME")]  # UserInput
+
+# 获取Profile集合
+profile_collection = output_db[os.getenv("MONGODB_COLLECTION_PROFILE")]  # Profile
 
 # ----------- Streamlit UI代码 -----------
 # 设置页面配置
@@ -250,6 +255,13 @@ if st.button("Find Matching Organizations"):
             "Target Audience": target_audience
         }
         
+        # 尝试将用户输入的信息插入到Profile集合中
+        try:
+            profile_collection.insert_one(row)  # 直接插入到Profile集合
+            st.success("User input successfully saved to MongoDB.")
+        except Exception as e:
+            st.error(f"Error saving user input to MongoDB: {str(e)}")
+
         with st.spinner("Finding matching organizations..."):
             generated_orgs = generate_ideal_organization(pd.Series(row))
             st.subheader("Suggested Organizations:")
