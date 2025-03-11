@@ -310,49 +310,191 @@ def process_matches(tags, looking_for_type, row):
     return filtered_matches[:20]  # 确保只返回20个
 
 def display_matches(filtered_matches, gpt_verified_count):
-    """Display matching results with company logos"""
+    """Display matching results in card view with evaluation options"""
     st.subheader("Top 20 Matching Organizations:")
     st.write(f"({gpt_verified_count} AI-verified matches, {20-gpt_verified_count} Similarity-based matches)")
+    
+    # 初始化评价状态
+    if 'match_evaluations' not in st.session_state:
+        st.session_state.match_evaluations = {}
+    
+    # 添加自定义CSS样式
+    st.markdown("""
+        <style>
+        .match-card {
+            background-color: #ffffff;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .match-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .match-header {
+            margin-bottom: 10px;
+        }
+        .match-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        .match-type {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .match-description {
+            color: #444;
+            margin: 10px 0;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        .match-details {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+        .match-evaluation {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+        .logo-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .logo-container img {
+            max-width: 200px;
+            max-height: 100px;
+            object-fit: contain;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .info-section {
+            margin-bottom: 15px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # 使用列布局创建网格
+    cols = st.columns(2)
     
     for i, match in enumerate(filtered_matches, 1):
         similarity, name, description, url, linkedin_desc, tagline, type_, industries, specialities, staff_count, city, state, linkedin_url, match_tags = match
         match_type = "AI-Verified Match" if i <= gpt_verified_count else "Similarity Match"
         
-        with st.expander(f"{i}. {name} ({match_type}, Similarity: {match[0]:.2%})"):
-            # Create three-column layout
-            col1, col2, col3 = st.columns([1, 2, 2])
-            
-            with col1:
-                # Try to get logo URL from MongoDB
-                try:
-                    collection = collection1 if looking_for_type.strip() == os.getenv("MONGODB_COLLECTION_NONPROFIT").strip() else collection2
-                    org_data = collection.find_one({"Name": name})
-                    if org_data and "linkedin_logo" in org_data:
-                        logo_url = org_data["linkedin_logo"]
-                        st.image(logo_url, width=150)
-                    else:
-                        st.write("No logo available")
-                except Exception as e:
-                    st.write("Unable to load logo")
-            
-            with col2:
-                st.write("**Basic Information**")
-                st.write(f"Description: {description}")
-                st.write(f"Website: {url}")
-                st.write(f"Location: {city}, {state}")
-                st.write("**Tags**")
-                st.write(f"{match_tags}")
-            
-            with col3:
-                st.write("**LinkedIn Information**")
-                if linkedin_url:
-                    st.write(f"[LinkedIn Profile]({linkedin_url})")
-                st.write(f"LinkedIn Description: {linkedin_desc}")
-                st.write(f"Tagline: {tagline}")
-                st.write(f"Type: {type_}")
-                st.write(f"Industries: {industries}")
-                st.write(f"Specialties: {specialities}")
-                st.write(f"Staff Count: {staff_count}")
+        # 在两列之间交替显示卡片
+        with cols[i % 2]:
+            with st.container():
+                st.markdown(f"""
+                    <div class="match-card">
+                        <div class="match-header">
+                            <div class="match-title">{name}</div>
+                            <div class="match-type">{match_type}</div>
+                        </div>
+                        <div class="match-description">{description}</div>
+                        <div class="match-details">
+                            <p><strong>Location:</strong> {city}, {state}</p>
+                            <p><strong>Type:</strong> {type_}</p>
+                            <p><strong>Staff Count:</strong> {staff_count}</p>
+                            <p><strong>Industries:</strong> {industries}</p>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # 使用expander显示额外信息
+                with st.expander("Additional Information"):
+                    # Logo 部分
+                    try:
+                        collection = collection1 if looking_for_type.strip() == os.getenv("MONGODB_COLLECTION_NONPROFIT").strip() else collection2
+                        org_data = collection.find_one({"Name": name})
+                        if org_data and "linkedin_logo" in org_data:
+                            logo_url = org_data["linkedin_logo"]
+                            st.markdown(f"""
+                                <div class="logo-container">
+                                    <img src="{logo_url}" alt="{name} logo">
+                                </div>
+                            """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.write("Logo not available")
+
+                    # 使用两列布局显示详细信息
+                    st.markdown('<div class="info-grid">', unsafe_allow_html=True)
+                    
+                    # 左列
+                    st.markdown('<div class="info-section">', unsafe_allow_html=True)
+                    st.markdown("**Organization Links**")
+                    if linkedin_url:
+                        st.write(f"[LinkedIn Profile]({linkedin_url})")
+                    if url and url != "N/A":
+                        st.write(f"[Website]({url})")
+                    
+                    st.markdown("**Basic Details**")
+                    st.write(f"**Type:** {type_}")
+                    st.write(f"**Location:** {city}, {state}")
+                    st.write(f"**Staff Count:** {staff_count}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # 右列
+                    st.markdown('<div class="info-section">', unsafe_allow_html=True)
+                    st.markdown("**LinkedIn Information**")
+                    st.write(f"**Tagline:** {tagline}")
+                    st.write(f"**Industries:** {industries}")
+                    st.write(f"**Specialties:** {specialities}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    # 底部显示完整描述和标签
+                    st.markdown("**Full LinkedIn Description**")
+                    st.write(linkedin_desc)
+                    
+                    st.markdown("**Tags & Keywords**")
+                    st.write(match_tags)
+                
+                # 添加评价选项
+                st.markdown('<div class="match-evaluation">', unsafe_allow_html=True)
+                st.session_state.match_evaluations[name] = st.radio(
+                    "Is this a good match?",
+                    ["Yes", "No", "Maybe"],
+                    key=f"eval_{name}",
+                    horizontal=True,
+                    index=0 if st.session_state.match_evaluations.get(name, "Maybe") == "Yes" else 
+                          1 if st.session_state.match_evaluations.get(name, "Maybe") == "No" else 2
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    # 添加提交按钮（使用固定位置的容器）
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    with st.container():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("Submit All Evaluations", use_container_width=True):
+                if st.session_state.get('current_row'):
+                    # 准备要存储的数据
+                    row = st.session_state['current_row'].copy()
+                    if '_id' in row:
+                        del row['_id']
+                    
+                    # 添加评价数据
+                    row.update({
+                        "Match Evaluations": st.session_state.match_evaluations,
+                        "Matched Organizations": [match[1] for match in filtered_matches[:20]]
+                    })
+                    
+                    try:
+                        store_user_input_to_db(row)
+                        st.success("Thank you! Your evaluations have been saved.")
+                        st.session_state.match_evaluations = {}
+                    except Exception as e:
+                        st.error(f"Error saving evaluations: {str(e)}")
 
 def store_user_input_to_db(user_data):
     """Store user input data to MongoDB User Input database in Profile collection."""
@@ -520,35 +662,6 @@ if submitted:
 # 直接显示匹配结果
 if st.session_state['filtered_matches']:
     display_matches(st.session_state['filtered_matches'], len(st.session_state['filtered_matches']))
-
-    # 显示满意度评分系统
-    st.subheader("Rate Your Satisfaction:")
-    with st.form(key='satisfaction_form'):
-        satisfaction_score = st.slider("Satisfaction Score (1-10)", 1, 10, st.session_state['satisfaction_score'])
-        satisfaction_reason = st.text_area("Reason for your rating:", st.session_state['satisfaction_reason'])
-
-        # 提交按钮
-        submit_button = st.form_submit_button(label='Submit Rating')
-
-        if submit_button and not st.session_state['feedback_submitted']:
-            # 在存储数据之前删除_id字段以避免重复键错误
-            row = st.session_state['current_row'].copy()
-            if '_id' in row:
-                del row['_id']
-
-            # 将评分数据与用户输入数据合并存储到数据库
-            row.update({
-                "Satisfaction Score": satisfaction_score,
-                "Satisfaction Reason": satisfaction_reason,
-                "Matched Organizations": [match[1] for match in st.session_state['filtered_matches'][:20]]
-            })
-            
-            try:
-                store_user_input_to_db(row)
-                st.session_state['feedback_submitted'] = True
-                st.success("Thank you for your feedback! Your rating has been saved to the database.")
-            except Exception as e:
-                st.error(f"Error saving feedback: {str(e)}")
 
 # Debug output for environment variables
 with st.expander("Environment Variables Status"):
