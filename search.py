@@ -9,6 +9,7 @@ from scipy.spatial.distance import cosine
 import requests
 from dotenv import load_dotenv
 import os
+import re
 
 # ----------- Streamlit UI代码 -----------
 # 设置页面配置（必须是第一个Streamlit命令）
@@ -188,12 +189,9 @@ def find_top_50_matches(embedding, looking_for_type):
     collection = collection1 if looking_for_type.strip() == os.getenv("MONGODB_COLLECTION_NONPROFIT").strip() else collection2
     
     try:
-        st.write(f"Searching in {looking_for_type} database...")
         for org in collection.find({"Embedding": {"$exists": True}}):
             if org.get("Embedding"):
-                # Convert from BSON Binary to numpy array
                 org_embedding = np.frombuffer(org["Embedding"], dtype=np.float32)
-                # Calculate similarity
                 similarity = 1 - cosine(embedding, org_embedding)
                 matches.append((
                     similarity,
@@ -213,8 +211,7 @@ def find_top_50_matches(embedding, looking_for_type):
                 ))
         
         matches.sort(reverse=True)
-        st.write(f"Found {len(matches)} potential matches")
-        return matches[:100]  # Return top 50 instead of 100
+        return matches[:100]
     except Exception as e:
         st.error(f"Error finding matches: {str(e)}")
         return []
@@ -278,47 +275,44 @@ def process_matches(tags, looking_for_type, row):
     if embedding is None:
         return []
     
-    # 获取前30个相似度匹配
     all_matches = find_top_50_matches(embedding, looking_for_type)
     if not all_matches:
         return []
     
-    st.write("Using AI to analyze match quality in depth...")
     filtered_matches = []
     remaining_matches = []
     
-    with st.spinner("Analyzing matches..."):
+    with st.spinner("Finding matching organizations..."):
         progress_bar = st.progress(0)
         
-        # 首先将所有匹配存入remaining_matches
         remaining_matches = all_matches.copy()
         
-        # 对前30个进行GPT评估
         for i, match in enumerate(all_matches[:30]):
             if evaluate_match_with_gpt(match, row):
                 filtered_matches.append(match)
-                remaining_matches.remove(match)  # 从remaining_matches中移除已匹配的
+                remaining_matches.remove(match)
             progress_bar.progress((i + 1) / 30)
         
-        # 确保总是返回20个匹配
         if len(filtered_matches) < 20:
-            # 计算需要补充的数量
             remaining_needed = 20 - len(filtered_matches)
-            # 从remaining_matches中取出需要的数量（已经按相似度排序）
             filtered_matches.extend(remaining_matches[:remaining_needed])
     
-    return filtered_matches[:20]  # 确保只返回20个
+    return filtered_matches[:20]
 
 def display_matches(filtered_matches, gpt_verified_count):
-    """Display matching results in card view with evaluation options"""
+    # 显示匹配结果标题
     st.subheader("Top 20 Matching Organizations:")
     st.write(f"({gpt_verified_count} AI-verified matches, {20-gpt_verified_count} Similarity-based matches)")
     
     # 初始化评价状态
     if 'match_evaluations' not in st.session_state:
         st.session_state.match_evaluations = {}
+    if 'overall_satisfaction' not in st.session_state:
+        st.session_state.overall_satisfaction = 3  # 默认值改为3（中间值）
+    if 'satisfaction_reason' not in st.session_state:
+        st.session_state.satisfaction_reason = ""
     
-    # 添加自定义CSS样式
+    # 更新CSS样式，添加评估区域的样式
     st.markdown("""
         <style>
         .match-card {
@@ -329,56 +323,53 @@ def display_matches(filtered_matches, gpt_verified_count):
             border: 1px solid #e0e0e0;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .match-card:hover {
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        
+        .evaluation-section {
+            background-color: #f8f9fa;
+            padding: 25px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #e0e0e0;
         }
-        .match-header {
-            margin-bottom: 10px;
-        }
-        .match-title {
-            font-size: 1.3em;
-            font-weight: bold;
+        
+        .evaluation-title {
             color: #2c3e50;
-            margin-bottom: 5px;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            font-weight: 600;
         }
-        .match-type {
+        
+        .evaluation-question {
+            color: #2d3748;
+            font-size: 1em;
+            margin: 15px 0 5px 0;
+            font-weight: 500;
+        }
+        
+        .evaluation-label {
             color: #666;
             font-size: 0.9em;
-            margin-bottom: 10px;
+            margin: 0;
         }
-        .match-description {
-            color: #444;
-            margin: 10px 0;
-            font-size: 0.95em;
-            line-height: 1.5;
+        
+        .stSlider {
+            width: 90%;
+            margin: 0 auto;
         }
-        .match-details {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #eee;
+        
+        .stSlider > div > div > div {
+            padding: 0 !important;
         }
-        .match-evaluation {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #eee;
-        }
-        .logo-container {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .logo-container img {
-            max-width: 200px;
-            max-height: 100px;
-            object-fit: contain;
-        }
-        .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+        
+        .feedback-section {
             margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
         }
-        .info-section {
-            margin-bottom: 15px;
+        
+        .submit-button {
+            margin-top: 20px;
+            text-align: center;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -459,42 +450,126 @@ def display_matches(filtered_matches, gpt_verified_count):
                     st.markdown("**Tags & Keywords**")
                     st.write(match_tags)
                 
-                # 添加评价选项
+                # 修改这部分，添加索引到key中以确保唯一性
                 st.markdown('<div class="match-evaluation">', unsafe_allow_html=True)
                 st.session_state.match_evaluations[name] = st.radio(
                     "Is this a good match?",
                     ["Yes", "No", "Maybe"],
-                    key=f"eval_{name}",
+                    key=f"eval_{i}_{name}",  # 添加索引i来确保key的唯一性
                     horizontal=True,
                     index=0 if st.session_state.match_evaluations.get(name, "Maybe") == "Yes" else 
                           1 if st.session_state.match_evaluations.get(name, "Maybe") == "No" else 2
                 )
                 st.markdown('</div>', unsafe_allow_html=True)
 
-    # 添加提交按钮（使用固定位置的容器）
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    with st.container():
-        col1, col2, col3 = st.columns([1, 2, 1])
+    # 在所有组织卡片之后添加整体评价部分
+    st.markdown("""
+        <div class='evaluation-section'>
+            <div class='evaluation-title'>Overall Evaluation</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 创建评估问题
+    evaluation_questions = {
+        "prototype_enhancement": {
+            "question": "Does our prototype enhance the matching process compared to your previous workflow?",
+            "key": "prototype_rating",
+            "labels": {1: "Not that Much", 5: "Very"}
+        },
+        "overall_satisfaction": {
+            "question": "How would you rate your overall experience with this survey?",
+            "key": "satisfaction_rating",
+            "labels": {1: "Not Satisfied", 5: "Extremely Satisfied"}
+        },
+        "process_intuitive": {
+            "question": "Was the whole process intuitive and easy to answer?",
+            "key": "intuitive_rating",
+            "labels": {1: "Not Intuitive", 5: "Very Intuitive"}
+        }
+    }
+
+    # 为每个问题创建滑动条
+    for key, data in evaluation_questions.items():
+        if key not in st.session_state:
+            st.session_state[key] = 3
+
+        st.markdown(f"<div class='evaluation-question'>{data['question']}</div>", unsafe_allow_html=True)
+        
+        # 创建更紧凑的三列布局
+        col1, col2, col3 = st.columns([1.5, 7, 1.5])
+        
+        # 显示左侧标签
+        with col1:
+            st.markdown(f"<div class='evaluation-label' style='text-align: left;'>{data['labels'][1]}</div>", unsafe_allow_html=True)
+        
+        # 显示滑动条
         with col2:
-            if st.button("Submit All Evaluations", use_container_width=True):
-                if st.session_state.get('current_row'):
-                    # 准备要存储的数据
-                    row = st.session_state['current_row'].copy()
-                    if '_id' in row:
-                        del row['_id']
-                    
-                    # 添加评价数据
-                    row.update({
-                        "Match Evaluations": st.session_state.match_evaluations,
-                        "Matched Organizations": [match[1] for match in filtered_matches[:20]]
-                    })
-                    
-                    try:
-                        store_user_input_to_db(row)
-                        st.success("Thank you! Your evaluations have been saved.")
-                        st.session_state.match_evaluations = {}
-                    except Exception as e:
-                        st.error(f"Error saving evaluations: {str(e)}")
+            st.session_state[key] = st.slider(
+                data['question'],
+                min_value=1,
+                max_value=5,
+                value=st.session_state[key],
+                key=data['key'],
+                label_visibility="collapsed"
+            )
+        
+        # 显示右侧标签
+        with col3:
+            st.markdown(f"<div class='evaluation-label' style='text-align: right;'>{data['labels'][5]}</div>", unsafe_allow_html=True)
+
+    # 添加反馈文本框
+    st.markdown("<div class='feedback-section'>", unsafe_allow_html=True)
+    st.markdown("<div class='evaluation-question'>Additional Feedback</div>", unsafe_allow_html=True)
+    st.session_state.satisfaction_reason = st.text_area(
+        "Please provide any additional feedback:",
+        value=st.session_state.get('satisfaction_reason', ''),
+        height=100,
+        key="feedback_text",
+        label_visibility="collapsed"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 添加提交按钮
+    st.markdown("<div class='submit-button'>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        submit_disabled = not st.session_state.user_email
+        if st.button("Submit All Evaluations", 
+                    use_container_width=True, 
+                    disabled=submit_disabled,
+                    help="Please provide your email address to submit" if submit_disabled else None):
+            if st.session_state.get('current_row'):
+                # 验证邮箱格式
+                email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+                if not re.match(email_pattern, st.session_state.user_email):
+                    st.error("Please enter a valid email address")
+                    return
+                
+                # 准备要存储的数据
+                row = st.session_state['current_row'].copy()
+                if '_id' in row:
+                    del row['_id']
+                
+                # 添加评价数据
+                row.update({
+                    "Match Evaluations": st.session_state.match_evaluations,
+                    "Matched Organizations": [match[1] for match in filtered_matches[:20]],
+                    "Prototype Enhancement Rating": st.session_state.prototype_enhancement,
+                    "Overall Satisfaction": st.session_state.overall_satisfaction,
+                    "Process Intuitive Rating": st.session_state.process_intuitive,
+                    "Satisfaction Reason": st.session_state.satisfaction_reason,
+                    "User Email": st.session_state.user_email
+                })
+                
+                try:
+                    store_user_input_to_db(row)
+                    st.success("Thank you! Your evaluations have been saved.")
+                    # 重置评价状态
+                    for key in evaluation_questions:
+                        st.session_state[key] = 3
+                    st.session_state.satisfaction_reason = ""
+                except Exception as e:
+                    st.error(f"Error saving evaluations: {str(e)}")
 
 def store_user_input_to_db(user_data):
     """Store user input data to MongoDB User Input database in Profile collection."""
@@ -526,6 +601,22 @@ def store_user_input_to_db(user_data):
 
 # ----------- Streamlit UI代码 -----------
 # 创建主标题和介绍
+st.markdown("""
+    <div style='background-color: #f0f9ff; padding: 20px; border-radius: 10px; margin-bottom: 30px; border: 1px solid #90cdf4;'>
+        <h3 style='color: #2b6cb0; margin-bottom: 15px;'>Thank you for participating in our research!</h3>
+        <p style='color: #4a5568; margin-bottom: 15px;'>To receive your Amazon Gift Card, please provide your email address below. After completing the organization evaluation, remember to click the "Submit All Evaluations" button at the bottom of the page.</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# 在蓝色框内添加邮箱输入
+with st.container():
+    st.session_state.user_email = st.text_input(
+        "Your Email Address *",
+        value=st.session_state.get('user_email', ''),
+        key="email_input",
+        help="Please provide your email to receive the Amazon Gift Card"
+    )
+
 st.title("Organization Partnership Matcher")
 st.markdown("""
 This tool helps you find potential partnership organizations that align with your values and goals.
@@ -561,6 +652,14 @@ if 'feedback_submitted' not in st.session_state:
     st.session_state['feedback_submitted'] = False
 if 'current_row' not in st.session_state:
     st.session_state['current_row'] = None
+
+# 初始化新的session state变量
+if 'difficulty_rating' not in st.session_state:
+    st.session_state.difficulty_rating = 3
+
+# 初始化session state变量
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = ""
 
 # 创建表单以收集所有输入
 with st.form(key='organization_form'):
